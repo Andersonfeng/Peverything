@@ -1,0 +1,32 @@
+﻿[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peverything"
+version = "1.0.0"
+description = "Everything 的 Python 实现：直读 NTFS MFT 建索引，毫秒级文件检索"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Peverything contributors" }]
+keywords = ["everything", "file-search", "ntfs", "mft", "usn", "windows", "search"]
+classifiers = [
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Desktop Environment :: File Managers",
+    "Topic :: System :: Filesystems",
+]
+dependencies = []
+
+[project.scripts]
+pev = "peverything.cli:main"
+
+[tool.setuptools]
+packages = ["peverything"]
+
