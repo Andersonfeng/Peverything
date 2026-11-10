@@ -108,7 +108,15 @@ def build(name: str, entry: Path, windowed: bool, onedir: bool) -> Path:
         str(entry),
     ]
     print("+ " + " ".join(args), flush=True)
-    subprocess.check_call(args)
+    try:
+        subprocess.check_call(args)
+    except subprocess.CalledProcessError:
+        print(
+            f"\n构建 {name} 失败。如果 PyInstaller 报的是 PermissionError / Access is denied，"
+            f"通常是 dist\\{name}.exe 还在运行：先关掉它再重试。",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     return DIST / (f"{name}.exe" if not onedir else name)
 
 

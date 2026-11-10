@@ -13,6 +13,10 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+from peverything import util
 
 try:
     import tkinter as tk
@@ -96,6 +100,45 @@ class GuiTestCase(unittest.TestCase):
         self.app.tree.selection_set(self.app.tree.get_children()[0])
         self.app.copy_path()
         self.assertTrue(self.root.clipboard_get().endswith(".txt"))
+
+    def test_shortcut_bindings_exist(self) -> None:
+        # Tk canonicalises "<Return>" to "<Key-Return>" in the bind table.
+        tree_sequences = self.app.tree.bind()
+        entry_sequences = self.app.search_entry.bind()
+        for sequence in ("<Key-Return>", "<Control-Key-Return>", "<Alt-Key-Return>"):
+            self.assertIn(sequence, tree_sequences, f"tree is missing {sequence}")
+            self.assertIn(sequence, entry_sequences, f"search box is missing {sequence}")
+
+    def test_enter_modifiers_do_not_open_the_file(self) -> None:
+        """Ctrl+Enter used to open the file, because Tk also fires `<Return>`."""
+        self.search("alpha")
+        self.app.tree.selection_set(self.app.tree.get_children()[0])
+        opened: list[str] = []
+        revealed: list[str] = []
+        properties: list[str] = []
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(util, "open_path", opened.append))
+            stack.enter_context(mock.patch.object(util, "reveal_path", revealed.append))
+            stack.enter_context(
+                mock.patch.object(util, "show_properties", lambda path: properties.append(path) or True)
+            )
+
+            ctrl = SimpleNamespace(state=0x0004)
+            alt = SimpleNamespace(state=0x0008)
+            plain = SimpleNamespace(state=0)
+
+            self.assertEqual(self.app._on_open_key(ctrl), "break")
+            self.assertEqual(opened, [], "Ctrl+Enter must not open the file")
+
+            self.assertEqual(self.app._on_reveal_key(ctrl), "break")
+            self.assertEqual(len(revealed), 1)
+
+            self.assertEqual(self.app._on_properties_key(alt), "break")
+            self.assertEqual(len(properties), 1)
+
+            self.app._on_open_key(plain)
+            self.assertEqual(len(opened), 1)
 
 
 if __name__ == "__main__":

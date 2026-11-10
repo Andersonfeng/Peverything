@@ -6,7 +6,7 @@ file name on a volume in a couple of seconds, then answer queries against
 that index without touching the disk again.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.2"
 __all__ = ["__version__", "APP_NAME"]
 
 APP_NAME = "Peverything"

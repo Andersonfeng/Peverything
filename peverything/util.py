@@ -199,11 +199,99 @@ def open_path(path: str | Path) -> None:
 
 
 def reveal_path(path: str | Path) -> None:
-    path = str(path)
-    if os.path.isdir(path):
-        subprocess.Popen(["explorer", "/e,", path])
+    """Open the containing folder in Explorer with the item selected.
+
+    Not done through ``explorer /select,<path>``: Popen quotes the whole
+    argument, so a path containing spaces turns into
+    ``explorer "/select,C:\\Program Files (x86)\\..."``, Explorer fails to parse
+    the switch and silently opens Documents instead.  The shell API takes a
+    PIDL, so quoting never enters the picture.
+    """
+    target = os.path.normpath(str(path))
+    if os.path.exists(target) and _reveal_with_shell(target):
+        return
+    if os.path.isdir(target):
+        subprocess.Popen(f'explorer /e,"{target}"')
     else:
-        subprocess.Popen(["explorer", f"/select,{path}"])
+        subprocess.Popen(f'explorer /select,"{target}"')
+
+
+def _reveal_with_shell(target: str) -> bool:
+    """SHOpenFolderAndSelectItems: opens the parent folder and selects *target*."""
+    if not is_windows():
+        return False
+    try:
+        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+        shell32.ILCreateFromPathW.argtypes = [ctypes.c_wchar_p]
+        shell32.ILCreateFromPathW.restype = ctypes.c_void_p
+        shell32.SHOpenFolderAndSelectItems.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.c_uint,
+        ]
+        shell32.SHOpenFolderAndSelectItems.restype = ctypes.c_long
+        shell32.ILFree.argtypes = [ctypes.c_void_p]
+        shell32.ILFree.restype = None
+        pidl = shell32.ILCreateFromPathW(target)
+        if not pidl:
+            return False
+        try:
+            return shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0) == 0
+        finally:
+            shell32.ILFree(pidl)
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+
+class _ShellExecuteInfoW(ctypes.Structure):
+    """SHELLEXECUTEINFOW, 64-bit layout (112 bytes with padding)."""
+
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("fMask", ctypes.c_ulong),
+        ("hwnd", ctypes.c_void_p),
+        ("lpVerb", ctypes.c_wchar_p),
+        ("lpFile", ctypes.c_wchar_p),
+        ("lpParameters", ctypes.c_wchar_p),
+        ("lpDirectory", ctypes.c_wchar_p),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", ctypes.c_void_p),
+        ("lpIDList", ctypes.c_void_p),
+        ("lpClass", ctypes.c_wchar_p),
+        ("hkeyClass", ctypes.c_void_p),
+        ("dwHotKey", ctypes.c_ulong),
+        ("hIcon", ctypes.c_void_p),
+        ("hProcess", ctypes.c_void_p),
+    ]
+
+
+def show_properties(path: str | Path) -> bool:
+    """Open the Windows "Properties" dialog for a file or folder.
+
+    This invokes the shell verb, so it behaves exactly like Explorer does:
+    size, details, permissions, previous versions, the security tab, ...
+    """
+    if not is_windows():
+        return False
+    target = str(Path(path))
+    if not os.path.exists(target):
+        return False
+    # SEE_MASK_INVOKEIDLIST (0x0C) is what makes the "properties" verb work.
+    SEE_MASK_INVOKEIDLIST = 0x0000000C
+    info = _ShellExecuteInfoW()
+    info.cbSize = ctypes.sizeof(_ShellExecuteInfoW)
+    info.fMask = SEE_MASK_INVOKEIDLIST
+    info.lpVerb = "properties"
+    info.lpFile = target
+    info.nShow = 1  # SW_SHOWNORMAL
+    try:
+        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+        shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfoW)]
+        shell32.ShellExecuteExW.restype = ctypes.c_int
+        return bool(shell32.ShellExecuteExW(ctypes.byref(info)))
+    except Exception:  # pragma: no cover - defensive
+        return False
 
 
 def copy_to_clipboard(text: str) -> bool:

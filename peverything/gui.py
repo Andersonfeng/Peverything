@@ -24,6 +24,10 @@ MAX_ROWS = 5000
 SEARCH_DEBOUNCE_MS = 120
 POLL_MS = 40
 
+#: Tk event.state bits for the modifiers we care about.
+_CTRL_MASK = 0x0004
+_ALT_MASK = 0x0008
+
 
 def asset_path(name: str) -> Path:
     """Locate a bundled asset both from source and from a PyInstaller bundle."""
@@ -57,7 +61,7 @@ HELP_TEXT = """搜索语法（与 Everything 基本一致）
   case:           区分大小写
 
 快捷键：Ctrl+F 聚焦搜索框 · Enter 打开 · Ctrl+Enter 打开所在文件夹
-        Ctrl+C 复制路径 · F5 重新扫描 · Esc 清空搜索
+        Alt+Enter 属性 · Ctrl+C 复制路径 · F5 重新扫描 · Esc 清空搜索
 """
 
 
@@ -131,6 +135,7 @@ class PeverythingApp:
         file_menu = tk.Menu(menubar, tearoff=False)
         file_menu.add_command(label="打开", accelerator="Enter", command=self.open_selected)
         file_menu.add_command(label="打开所在文件夹", accelerator="Ctrl+Enter", command=self.reveal_selected)
+        file_menu.add_command(label="属性", accelerator="Alt+Enter", command=self.show_properties)
         file_menu.add_separator()
         file_menu.add_command(label="复制完整路径", accelerator="Ctrl+C", command=self.copy_path)
         file_menu.add_command(label="复制文件名", command=self.copy_name)
@@ -177,8 +182,9 @@ class PeverythingApp:
         )
         self.search_entry.pack(side="left", fill="x", expand=True)
         self.search_entry.bind("<KeyRelease>", self._on_search_key)
-        self.search_entry.bind("<Return>", lambda _event: self.open_selected())
-        self.search_entry.bind("<Control-Return>", lambda _event: self.reveal_selected())
+        self.search_entry.bind("<Return>", self._on_open_key)
+        self.search_entry.bind("<Control-Return>", self._on_reveal_key)
+        self.search_entry.bind("<Alt-Return>", self._on_properties_key)
         self.search_entry.bind("<Escape>", lambda _event: self.clear_search())
         self.search_var.trace_add("write", lambda *_: self._schedule_search())
         self.count_label = ttk.Label(top, text="", font=("Microsoft YaHei UI", 9))
@@ -199,17 +205,18 @@ class PeverythingApp:
         self.tree.tag_configure("dir", foreground="#0a5c9e")
         self.tree.tag_configure("odd", background="#f7f9fb")
         self.tree.bind("<Double-1>", lambda _event: self.open_selected())
-        self.tree.bind("<Return>", lambda _event: self.open_selected())
+        self.tree.bind("<Return>", self._on_open_key)
+        self.tree.bind("<Control-Return>", self._on_reveal_key)
+        self.tree.bind("<Alt-Return>", self._on_properties_key)
         self.tree.bind("<Control-c>", lambda _event: self.copy_path())
 
         self.menu = tk.Menu(self.root, tearoff=False)
         self.menu.add_command(label="打开", command=self.open_selected)
         self.menu.add_command(label="打开所在文件夹", command=self.reveal_selected)
+        self.menu.add_command(label="属性", command=self.show_properties)
         self.menu.add_separator()
         self.menu.add_command(label="复制完整路径", command=self.copy_path)
         self.menu.add_command(label="复制文件名", command=self.copy_name)
-        self.menu.add_separator()
-        self.menu.add_command(label="属性", command=self.reveal_selected)
         self.tree.bind("<Button-3>", self._show_menu)
 
         bottom = ttk.Frame(self.root, padding=(8, 4, 8, 6))
@@ -222,6 +229,7 @@ class PeverythingApp:
 
         self.root.bind("<Control-f>", lambda _event: self.search_entry.focus_set())
         self.root.bind("<F5>", lambda _event: self.scan_all())
+        self.root.bind("<Alt-Return>", lambda _event: self.show_properties())
         self.search_entry.focus_set()
 
     # --------------------------------------------------------------- utils ---
@@ -502,6 +510,25 @@ class PeverythingApp:
         self.search_var.set("")
         self.search_entry.focus_set()
 
+    # ------------------------------------------------------------ keyboard ---
+    # Tk ignores modifiers that a pattern does not mention, so `<Return>` also
+    # fires for Ctrl+Enter / Alt+Enter. Every combination binding must therefore
+    # return "break", and the plain one must refuse to run with a modifier down;
+    # otherwise Ctrl+Enter opened the file before jumping to its folder.
+    def _on_open_key(self, event: tk.Event) -> str:
+        if event.state & (_CTRL_MASK | _ALT_MASK):
+            return "break"
+        self.open_selected()
+        return "break"
+
+    def _on_reveal_key(self, event: tk.Event) -> str:
+        self.reveal_selected()
+        return "break"
+
+    def _on_properties_key(self, event: tk.Event) -> str:
+        self.show_properties()
+        return "break"
+
     # ----------------------------------------------------------- selection ---
     def _selected_row(self) -> FileRow | None:
         selection = self.tree.selection()
@@ -526,6 +553,14 @@ class PeverythingApp:
         if row is None:
             return
         util.reveal_path(row.path)
+
+    def show_properties(self) -> None:
+        """Open the Windows properties sheet, exactly like Explorer does."""
+        row = self._selected_row()
+        if row is None:
+            return
+        if not util.show_properties(row.path):
+            messagebox.showwarning("属性", f"无法显示属性：\n{row.path}")
 
     def copy_path(self) -> None:
         selection = self.tree.selection()
