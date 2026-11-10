@@ -49,7 +49,7 @@ Everything 之所以快，是因为它**不遍历目录**，而是直接问 NTFS
 | 非 NTFS / 无管理员降级 | ✅ | 有限 | ✅ 多线程 `os.scandir` 兜底 |
 | 毫秒级子串检索 | ✅ | ✅ | ✅ 连续 blob + `bytes.find` |
 | Everything 风格查询语法 | ✅ | 部分 | ✅ 常用子集 |
-| 图形界面 | ✅ 原生 Win32 | Swing | ✅ Tkinter（单文件、无依赖） |
+| 图形界面 | ✅ 原生 Win32 | Swing | ✅ Tkinter（无依赖，带托盘与全局热键） |
 | 命令行 | 有限 | 无 | ✅ `scan/search/info/watch/gui` |
 | 依赖 | — | JVM | **仅 Python 标准库** |
 
@@ -165,6 +165,30 @@ pev gui    [-o 索引] [--query 预填搜索词]
 - 单次最多显示 5000 条，超出会在标题栏提示。
 
 菜单「索引 → 以管理员身份重启」可一键提权，换取 MFT 直读 + 实时监控。
+
+### 常驻后台：全局热键 + 托盘
+
+和 Everything 一样，关掉窗口不等于退出：
+
+- **全局热键** `Ctrl+Alt+E`（可改）在任何程序里按下，都能显示 / 隐藏窗口；
+- 关闭窗口（X）默认**最小化到托盘**，程序继续在后台监听热键、监控文件变化；
+- 托盘图标：左键单击 / 双击唤出窗口，右键菜单有「显示 / 打开索引所在目录 / 退出」；
+- **单实例**：已经有一份在后台时，再双击 `Peverything.exe` 只会把已有窗口叫到前面，不会再开一份；
+- 第一次隐藏到托盘时会弹一个气泡提示，告诉你还在后台、怎么叫回来。
+
+「设置 → 首选项 ...」（`Ctrl+,`）里可以改：
+
+| 选项 | 说明 |
+| --- | --- |
+| 全局热键 | 例如 `Ctrl+Alt+E`、`Win+Shift+F`、`F9`；清空即关闭热键 |
+| 关闭窗口时 | 最小化到托盘 / 最小化到任务栏 / 退出程序 |
+| 在通知区域显示图标 | 关掉后 x 只能最小化到任务栏 |
+
+设置保存在 `%LOCALAPPDATA%\Peverything\settings.json`。
+
+> 新版 Windows 会把新注册的托盘图标放进「隐藏的图标」溢出区（`Shell_NotifyIconGetRect`
+> 返回 `S_FALSE` 就是这个状态），把图标从溢出区拖到任务栏上固定一下即可一直可见；
+> 热键不受影响。
 
 ## 工作原理
 
@@ -298,11 +322,13 @@ peverything/
   query.py      Everything 风格查询语法：解析、字面量预筛、AND/OR/NOT 求值
   watcher.py    USN 日志实时监控与路径还原
   gui.py        Tkinter 界面（Everything 风格）
+  shell_agent.py 全局热键 + 托盘图标 + 单实例（隐藏窗口 + 独立消息循环）
+  settings.py   首选项（%LOCALAPPDATA%\Peverything\settings.json）
   gui_entry.py  窗口版 exe 的入口（无参数时自动补 gui 子命令）
   cli.py        命令行入口
   util.py       权限、内存、格式化、资源管理器定位等工具
   assets/       应用图标（tools/make_icon.py 生成）
-tests/          83 个单元测试（不需要管理员，也不需要 NTFS）
+tests/          102 个单元测试（不需要管理员，也不需要 NTFS）
 tools/          build_exe.py 打包、bench.py 基准、make_icon.py 图标、capture_window.ps1 截图
 ```
 
@@ -312,9 +338,9 @@ tools/          build_exe.py 打包、bench.py 基准、make_icon.py 图标、ca
 python -m unittest discover -s tests -v
 ```
 
-83 个用例，覆盖：查询语法与匹配语义、索引保存/加载/增量合并、USN 记录结构解析、
+102 个用例，覆盖：查询语法与匹配语义、索引保存/加载/增量合并、USN 记录结构解析、
 MFT 路径重建（含乱序、孤儿、成环）、监控路径还原、CLI 端到端流程，以及 GUI 的
-加载/检索/排序/复制（无显示环境时自动跳过）。
+加载/检索/排序/复制，以及热键解析、设置读写、托盘与单实例（无显示环境时自动跳过）。
 
 这些测试全部在**普通用户**下运行：USN 结构用合成 buffer 验证，MFT 重建用纯函数
 验证，因此 CI 不需要管理员权限或真实 NTFS 卷。
@@ -337,7 +363,7 @@ python tools\build_exe.py
 | `dist\pev\pev.exe` | 目录版（`--onedir`） | 19.3 MB 目录 | 启动最快，适合当命令行工具 |
 
 两个 exe 都写入了图标与版本资源（右键 → 属性 → 详细信息可见
-`Peverything 文件检索 1.0.2.0`），窗口标题栏也用同一个图标。
+`Peverything 文件检索 1.1.0.0`），窗口标题栏也用同一个图标。
 
 启动开销（本机实测，含进程创建）：
 
@@ -369,6 +395,9 @@ python tools\build_exe.py
 
 ## 更新记录
 
+- **1.1.0** — 新增全局热键（默认 `Ctrl+Alt+E`，可自定义）、关闭窗口常驻托盘、
+  托盘右键菜单、设置对话框（热键 / 关闭行为 / 托盘图标），以及单实例保护：
+  后台已有一份时再次启动只会唤起窗口。
 - **1.0.2** — 修复「打开所在文件夹」在路径含空格时打开「文档」的问题：不再拼
   `explorer /select,` 命令行，改用 shell 的 `SHOpenFolderAndSelectItems`；
   修复 `Ctrl+Enter` 会顺便触发 `Enter` 把文件打开的问题（Tk 忽略模式里未声明的修饰键，

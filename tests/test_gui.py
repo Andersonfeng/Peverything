@@ -56,14 +56,20 @@ class GuiTestCase(unittest.TestCase):
             )
 
         from peverything.gui import PeverythingApp
+        from peverything.settings import Settings
 
         self.root = tk.Tk()
-        self.app = PeverythingApp(self.root, self.index_path)
+        self.app = PeverythingApp(
+            self.root,
+            self.index_path,
+            settings=Settings(close_action="exit", tray_icon=False, hotkey_enabled=False),
+            enable_shell=False,
+        )
         self.assertTrue(pump(self.root, lambda: self.app.index is not None, timeout=20))
 
     def tearDown(self) -> None:
         try:
-            self.app.close()
+            self.app.quit_app()
         finally:
             self.folder.cleanup()
 
@@ -139,6 +145,23 @@ class GuiTestCase(unittest.TestCase):
 
             self.app._on_open_key(plain)
             self.assertEqual(len(opened), 1)
+
+    def test_hotkey_toggles_window(self) -> None:
+        self.search("alpha")
+        self.app._on_hotkey()
+        self.root.update()
+        self.assertEqual(self.root.state(), "withdrawn")
+        self.app._on_hotkey()
+        self.root.update()
+        self.assertNotEqual(self.root.state(), "withdrawn")
+
+    def test_close_action_exit(self) -> None:
+        """With close_action=exit the X button really quits (no tray)."""
+        self.app.close()
+        with self.assertRaises(tk.TclError):
+            self.root.winfo_exists()
+        # quit_app is idempotent: tearDown runs again without raising.
+        self.app.quit_app()
 
 
 if __name__ == "__main__":

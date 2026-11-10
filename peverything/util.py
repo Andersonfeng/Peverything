@@ -108,6 +108,10 @@ def default_index_path() -> Path:
     return app_dir() / "index.pev"
 
 
+def settings_path() -> Path:
+    return app_dir() / "settings.json"
+
+
 def ensure_parent(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     return path

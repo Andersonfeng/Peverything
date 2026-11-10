@@ -19,6 +19,16 @@ import tkinter as tk
 
 from . import APP_NAME, __version__, query, scanner, util
 from .index import FileRow, SearchIndex
+from .settings import CLOSE_ACTIONS, DEFAULT_HOTKEY, Settings
+from .shell_agent import (
+    MENU_INDEX_DIR,
+    MENU_QUIT,
+    MENU_SHOW,
+    ShellAgent,
+    SingleInstance,
+    broadcast_show,
+    parse_hotkey,
+)
 
 MAX_ROWS = 5000
 SEARCH_DEBOUNCE_MS = 120
@@ -66,9 +76,19 @@ HELP_TEXT = """搜索语法（与 Everything 基本一致）
 
 
 class PeverythingApp:
-    def __init__(self, root: tk.Tk, index_path: Path, initial_query: str = "") -> None:
+    def __init__(
+        self,
+        root: tk.Tk,
+        index_path: Path,
+        initial_query: str = "",
+        settings: Settings | None = None,
+        enable_shell: bool = True,
+    ) -> None:
         self.root = root
         self.index_path = index_path
+        self.settings = settings or Settings.load()
+        self.enable_shell = enable_shell
+        self.agent: ShellAgent | None = None
         self.index: SearchIndex | None = None
         self.index_lock = threading.Lock()
         self.events: queue.Queue[tuple] = queue.Queue()
@@ -85,6 +105,9 @@ class PeverythingApp:
         self.scanning = False
         self.last_search_seconds = 0.0
         self.initial_query = initial_query
+        self._settings_window: tk.Toplevel | None = None
+        self._tray_hint_shown = False
+        self._topmost_job: str | None = None
 
         self._build_ui()
         self._pump_job: str | None = self.root.after(POLL_MS, self._drain_events)
@@ -92,12 +115,29 @@ class PeverythingApp:
         if initial_query:
             self.search_var.set(initial_query)
         self.root.after(80, self._load_index_async)
+        if enable_shell:
+            self.root.after(150, self._start_shell_agent)
 
+    # ------------------------------------------------------------ lifecycle ---
     def close(self) -> None:
-        """Stop background work and tear the window down without Tcl noise."""
+        """The window's X button: honour the configured close action."""
+        action = self.settings.close_action
+        if action == "tray" and self.agent is not None and self.agent.tray_visible:
+            self.hide_window()
+            return
+        if action == "taskbar":
+            self.root.iconify()
+            return
+        self.quit_app()
+
+    def quit_app(self) -> None:
+        """Really exit: stop background work and remove the tray icon."""
         self.watcher_stop.set()
         self.scanning = False
-        for job in (self._pump_job, self.search_job):
+        if self.agent is not None:
+            self.agent.stop()
+            self.agent = None
+        for job in (self._pump_job, self.search_job, self._topmost_job):
             if job:
                 try:
                     self.root.after_cancel(job)
@@ -105,10 +145,99 @@ class PeverythingApp:
                     pass
         self._pump_job = None
         self.search_job = None
+        self._topmost_job = None
         try:
             self.root.destroy()
         except Exception:  # pragma: no cover - already destroyed
             pass
+
+    # --------------------------------------------------------- shell agent ---
+    def _start_shell_agent(self) -> None:
+        if not util.is_windows():
+            return
+        self.agent = ShellAgent(
+            icon_path=asset_path("peverything.ico"),
+            tooltip="Peverything 文件检索",
+            on_hotkey=lambda: self._post("hotkey", None),
+            on_tray_activate=lambda: self._post("tray_show", None),
+            on_tray_menu=lambda command: self._post("tray_menu", command),
+        )
+        if not self.agent.start():
+            self.status_label.config(text=f"全局热键不可用：{self.agent.error or '初始化失败'}")
+            self.agent = None
+            return
+        self.apply_shell_settings()
+
+    def apply_shell_settings(self) -> None:
+        """Push the current hotkey / tray preferences to the shell agent."""
+        if self.agent is None:
+            return
+        if self.settings.hotkey_enabled and self.settings.hotkey:
+            if not self.agent.register_hotkey(self.settings.hotkey):
+                self.hint_label.config(
+                    text=f"热键 {self.settings.hotkey} 注册失败（可能被占用），可在「设置」里换一个"
+                )
+        else:
+            self.agent.unregister_hotkey()
+        self.agent.set_tray_visible(self.settings.tray_icon)
+        self._refresh_hotkey_hint()
+
+    def _refresh_hotkey_hint(self) -> None:
+        if self.agent is not None and self.agent.hotkey:
+            self.hint_label.config(text=f"按 {self.agent.hotkey} 显示 / 隐藏窗口")
+
+    def toggle_window(self) -> None:
+        if self.root.state() == "withdrawn" or self.root.state() == "iconic":
+            self.show_window()
+        else:
+            self.hide_window()
+
+    def hide_window(self) -> None:
+        self.root.withdraw()
+        if self.agent is not None and self.agent.tray_visible and not self._tray_hint_shown:
+            self._tray_hint_shown = True
+            hotkey = self.agent.hotkey or "热键"
+            self.agent.show_balloon(
+                "Peverything 仍在后台运行",
+                f"按 {hotkey} 重新显示窗口；右键托盘图标可以退出。",
+            )
+
+    def show_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        try:
+            self.root.focus_force()
+        except Exception:  # pragma: no cover - defensive
+            pass
+        # A background process may not be allowed to steal focus; a short
+        # topmost pulse is the usual workaround.
+        self.root.attributes("-topmost", True)
+        if self._topmost_job:
+            try:
+                self.root.after_cancel(self._topmost_job)
+            except Exception:  # pragma: no cover - already fired
+                pass
+        self._topmost_job = self.root.after(150, self._drop_topmost)
+        self.search_entry.focus_set()
+        self.search_entry.select_range(0, "end")
+
+    def _drop_topmost(self) -> None:
+        self._topmost_job = None
+        try:
+            self.root.attributes("-topmost", False)
+        except Exception:  # pragma: no cover - window already gone
+            pass
+
+    def _on_hotkey(self) -> None:
+        self.toggle_window()
+
+    def _on_tray_menu(self, command: int) -> None:
+        if command == MENU_SHOW:
+            self.show_window()
+        elif command == MENU_INDEX_DIR:
+            util.reveal_path(self.index_path)
+        elif command == MENU_QUIT:
+            self.quit_app()
 
     # ------------------------------------------------------------------ ui ---
     def _build_ui(self) -> None:
@@ -141,7 +270,7 @@ class PeverythingApp:
         file_menu.add_command(label="复制文件名", command=self.copy_name)
         file_menu.add_command(label="导出结果为 CSV ...", command=self.export_csv)
         file_menu.add_separator()
-        file_menu.add_command(label="退出", command=self.root.destroy)
+        file_menu.add_command(label="退出", command=self.quit_app)
         menubar.add_cascade(label="文件", menu=file_menu)
 
         index_menu = tk.Menu(menubar, tearoff=False)
@@ -158,6 +287,11 @@ class PeverythingApp:
         index_menu.add_separator()
         index_menu.add_command(label="索引信息 ...", command=self.show_index_info)
         menubar.add_cascade(label="索引", menu=index_menu)
+
+        settings_menu = tk.Menu(menubar, tearoff=False)
+        settings_menu.add_command(label="首选项 ...", accelerator="Ctrl+,", command=self.open_settings)
+        settings_menu.add_command(label="显示 / 隐藏窗口", accelerator="全局热键", command=self.toggle_window)
+        menubar.add_cascade(label="设置", menu=settings_menu)
 
         help_menu = tk.Menu(menubar, tearoff=False)
         help_menu.add_command(label="搜索语法", command=lambda: messagebox.showinfo("搜索语法", HELP_TEXT))
@@ -230,6 +364,7 @@ class PeverythingApp:
         self.root.bind("<Control-f>", lambda _event: self.search_entry.focus_set())
         self.root.bind("<F5>", lambda _event: self.scan_all())
         self.root.bind("<Alt-Return>", lambda _event: self.show_properties())
+        self.root.bind("<Control-comma>", lambda _event: self.open_settings())
         self.search_entry.focus_set()
 
     # --------------------------------------------------------------- utils ---
@@ -282,6 +417,12 @@ class PeverythingApp:
             self.watch_var.set(False)
             self._update_status()
             messagebox.showwarning("实时监控已停止", str(payload))
+        elif kind == "hotkey":
+            self._on_hotkey()
+        elif kind == "tray_show":
+            self.show_window()
+        elif kind == "tray_menu":
+            self._on_tray_menu(int(payload))
 
     # --------------------------------------------------------------- index ---
     def _load_index_async(self) -> None:
@@ -688,12 +829,114 @@ class PeverythingApp:
             lines.append(f"建立时间：{util.format_time(int(created), '%Y-%m-%d %H:%M:%S')}")
         messagebox.showinfo("索引信息", "\n".join(lines))
 
+    # ------------------------------------------------------------ settings ---
+    def open_settings(self) -> None:
+        if self._settings_window is not None:
+            self._settings_window.lift()
+            return
+        window = tk.Toplevel(self.root)
+        self._settings_window = window
+        window.title("设置")
+        window.transient(self.root)
+        window.resizable(False, False)
+        window.protocol("WM_DELETE_WINDOW", lambda: self._close_settings(window))
+
+        frame = ttk.Frame(window, padding=14)
+        frame.pack(fill="both", expand=True)
+
+        hotkey_var = tk.StringVar(value=self.settings.hotkey)
+        enabled_var = tk.BooleanVar(value=self.settings.hotkey_enabled)
+        tray_var = tk.BooleanVar(value=self.settings.tray_icon)
+        close_var = tk.StringVar(value=self.settings.close_action)
+
+        ttk.Label(frame, text="全局热键（显示 / 隐藏窗口）", font=("Microsoft YaHei UI", 9, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w"
+        )
+        entry = ttk.Entry(frame, textvariable=hotkey_var, width=24, font=("Consolas", 10))
+        entry.grid(row=1, column=0, sticky="w", pady=(6, 2))
+        ttk.Checkbutton(frame, text="启用", variable=enabled_var).grid(row=1, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(
+            frame,
+            text="例如 Ctrl+Alt+E、Win+Shift+F、Ctrl+Shift+Space；留空表示不启用",
+            foreground="#666666",
+        ).grid(row=2, column=0, columnspan=2, sticky="w")
+
+        ttk.Separator(frame, orient="horizontal").grid(row=3, column=0, columnspan=2, sticky="ew", pady=12)
+
+        ttk.Label(frame, text="关闭窗口时", font=("Microsoft YaHei UI", 9, "bold")).grid(
+            row=4, column=0, columnspan=2, sticky="w"
+        )
+        for offset, (value, label) in enumerate(CLOSE_ACTIONS.items()):
+            ttk.Radiobutton(frame, text=label, value=value, variable=close_var).grid(
+                row=5 + offset, column=0, columnspan=2, sticky="w", pady=(4, 0)
+            )
+        ttk.Checkbutton(frame, text="在通知区域显示图标（托盘）", variable=tray_var).grid(
+            row=8, column=0, columnspan=2, sticky="w", pady=(12, 0)
+        )
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=9, column=0, columnspan=2, sticky="e", pady=(16, 0))
+
+        def save() -> None:
+            spec = hotkey_var.get().strip()
+            if enabled_var.get() and spec:
+                try:
+                    parse_hotkey(spec)
+                except ValueError as exc:
+                    messagebox.showwarning("热键无效", str(exc), parent=window)
+                    return
+            self.settings.hotkey = spec
+            self.settings.hotkey_enabled = bool(enabled_var.get()) and bool(spec)
+            self.settings.tray_icon = bool(tray_var.get())
+            self.settings.close_action = close_var.get() or "tray"
+            try:
+                self.settings.save()
+            except OSError as exc:
+                messagebox.showwarning("设置未保存", f"{exc}", parent=window)
+            self.apply_shell_settings()
+            self._close_settings(window)
+
+        ttk.Button(buttons, text="保存", command=save, width=10).pack(side="right")
+        ttk.Button(buttons, text="取消", command=lambda: self._close_settings(window), width=10).pack(
+            side="right", padx=(0, 8)
+        )
+        ttk.Button(
+            buttons,
+            text="恢复默认",
+            command=lambda: hotkey_var.set(DEFAULT_HOTKEY) or enabled_var.set(True),
+            width=10,
+        ).pack(side="left")
+
+        window.grab_set()
+        entry.focus_set()
+        window.bind("<Escape>", lambda _event: self._close_settings(window))
+        window.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - window.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - window.winfo_height()) // 3
+        window.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    def _close_settings(self, window: tk.Toplevel) -> None:
+        try:
+            window.grab_release()
+        except Exception:  # pragma: no cover - defensive
+            pass
+        window.destroy()
+        self._settings_window = None
+
 
 def launch(index_path: Path | None = None, initial_query: str = "") -> int:
     """Open the window; returns a process exit code."""
+    guard = SingleInstance()
+    if guard.already_running:
+        # A resident copy is already running: bring it to the front and leave.
+        broadcast_show()
+        return 0
     root = tk.Tk()
     try:
-        PeverythingApp(root, index_path or util.default_index_path(), initial_query)
+        app = PeverythingApp(root, index_path or util.default_index_path(), initial_query)
+        app.single_instance = guard  # keep the mutex handle alive
+        if app.settings.start_hidden:
+            root.after(300, app.hide_window)
     except Exception:  # pragma: no cover - startup failure
         traceback.print_exc()
         messagebox.showerror("启动失败", traceback.format_exc())
