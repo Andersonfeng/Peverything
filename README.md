@@ -86,6 +86,16 @@ pev search "report"
 或者直接双击仓库根目录的 `pev.bat` / `Peverything.bat`（后者以 `pythonw` 启动，
 不弹黑框）。
 
+想给别人用、或者机器上没装 Python，就打包成独立 exe：
+
+```bat
+python -m pip install pyinstaller
+python tools\build_exe.py
+dist\Peverything.exe
+```
+
+详见[打包成 exe](#打包成-exe)。
+
 索引默认保存在 `%LOCALAPPDATA%\Peverything\index.pev`，可用 `-o` 或环境变量
 `PEVERYTHING_INDEX` 指定。
 
@@ -288,10 +298,12 @@ peverything/
   query.py      Everything 风格查询语法：解析、字面量预筛、AND/OR/NOT 求值
   watcher.py    USN 日志实时监控与路径还原
   gui.py        Tkinter 界面（Everything 风格）
+  gui_entry.py  窗口版 exe 的入口（无参数时自动补 gui 子命令）
   cli.py        命令行入口
   util.py       权限、内存、格式化、资源管理器定位等工具
-tests/          79 个单元测试（不需要管理员，也不需要 NTFS）
-tools/          bench.py 基准测试、capture_window.ps1 截图脚本
+  assets/       应用图标（tools/make_icon.py 生成）
+tests/          83 个单元测试（不需要管理员，也不需要 NTFS）
+tools/          build_exe.py 打包、bench.py 基准、make_icon.py 图标、capture_window.ps1 截图
 ```
 
 ## 测试
@@ -300,7 +312,7 @@ tools/          bench.py 基准测试、capture_window.ps1 截图脚本
 python -m unittest discover -s tests -v
 ```
 
-79 个用例，覆盖：查询语法与匹配语义、索引保存/加载/增量合并、USN 记录结构解析、
+83 个用例，覆盖：查询语法与匹配语义、索引保存/加载/增量合并、USN 记录结构解析、
 MFT 路径重建（含乱序、孤儿、成环）、监控路径还原、CLI 端到端流程，以及 GUI 的
 加载/检索/排序/复制（无显示环境时自动跳过）。
 
@@ -309,11 +321,43 @@ MFT 路径重建（含乱序、孤儿、成环）、监控路径还原、CLI 端
 
 ## 打包成 exe
 
+仓库自带打包脚本，一条命令产出独立可执行文件（目标机器无需安装 Python）：
+
 ```bat
-pip install pyinstaller
-pyinstaller --noconfirm --onefile --name pev --console peverything\__main__.py
-pyinstaller --noconfirm --onefile --name Peverything --windowed --add-data "peverything;peverything" peverything\__main__.py
+python -m pip install pyinstaller
+python tools\build_exe.py
 ```
+
+产物（已实测）：
+
+| 文件 | 形态 | 大小 | 说明 |
+| --- | --- | --- | --- |
+| `dist\pev.exe` | 单文件 · 控制台 | 8.3 MB | `pev scan` / `pev search` / `pev gui` … |
+| `dist\Peverything.exe` | 单文件 · 窗口 | 8.3 MB | 双击直接开界面（自动补 `gui` 子命令，无黑框） |
+| `dist\pev\pev.exe` | 目录版（`--onedir`） | 19.3 MB 目录 | 启动最快，适合当命令行工具 |
+
+两个 exe 都写入了图标与版本资源（右键 → 属性 → 详细信息可见
+`Peverything 文件检索 1.0.0.0`），窗口标题栏也用同一个图标。
+
+启动开销（本机实测，含进程创建）：
+
+| 方式 | `--version` | 在 52 万条索引上 `search kernel32` |
+| --- | --- | --- |
+| 源码 `python -m peverything` | 0.05 s | 0.22 s |
+| `--onedir` 目录版 | 0.05 s | 0.23 s |
+| `--onefile` 单文件版 | 0.86 s | 1.08 s |
+
+单文件版每次启动都要把约 8 MB 解包到 `%TEMP%`，所以慢 0.8 秒左右；如果天天用命令行，
+建议 `python tools\build_exe.py --onedir` 生成目录版。
+
+其他开关：`--console-only`、`--gui-only`、`--onedir`。
+
+注意事项：
+
+- PyInstaller 单文件 exe 未签名，部分杀软 / SmartScreen 会拦一下，自行签名或改用目录版即可；
+- 打包不改变索引位置，仍是 `%LOCALAPPDATA%\Peverything\index.pev`，也可 `-o` 指定；
+- `Peverything.exe` 需要 MFT 直读 / 实时监控时，右键「以管理员身份运行」，或用界面菜单
+  「索引 → 以管理员身份重启」。
 
 ## 后续可以做的事
 

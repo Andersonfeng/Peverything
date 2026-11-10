@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import queue
+import sys
 import threading
 import time
 import traceback
@@ -22,6 +23,12 @@ from .index import FileRow, SearchIndex
 MAX_ROWS = 5000
 SEARCH_DEBOUNCE_MS = 120
 POLL_MS = 40
+
+
+def asset_path(name: str) -> Path:
+    """Locate a bundled asset both from source and from a PyInstaller bundle."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / "assets" / name
 
 COLUMNS = (
     ("name", "名称", 360, "w"),
@@ -104,6 +111,12 @@ class PeverythingApp:
         self.root.title(f"{APP_NAME} {__version__} - 极速文件检索")
         self.root.geometry("1180x700")
         self.root.minsize(820, 460)
+        try:
+            icon = asset_path("peverything.ico")
+            if icon.exists():
+                self.root.iconbitmap(default=str(icon))
+        except Exception:  # pragma: no cover - icon is cosmetic
+            pass
 
         style = ttk.Style()
         for theme in ("vista", "winnative", "clam"):

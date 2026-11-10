@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$TitleLike,
     [Parameter(Mandatory = $true)][string]$Out,
-    [int]$WaitSeconds = 6
+    [int]$WaitSeconds = 6,
+    [string]$ProcessName = ""
 )
 
 Add-Type -AssemblyName System.Drawing
@@ -21,9 +22,12 @@ public class PevCapture {
 $deadline = (Get-Date).AddSeconds($WaitSeconds)
 $handle = [IntPtr]::Zero
 while ((Get-Date) -lt $deadline) {
-    $proc = Get-Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like "*$TitleLike*"
-    } | Select-Object -First 1
+    $candidates = Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like "*$TitleLike*" }
+    if ($ProcessName) {
+        $candidates = $candidates | Where-Object { $_.ProcessName -eq $ProcessName }
+    }
+    $proc = $candidates | Select-Object -First 1
     if ($proc) { $handle = $proc.MainWindowHandle; break }
     Start-Sleep -Milliseconds 300
 }

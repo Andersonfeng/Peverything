@@ -95,5 +95,36 @@ class CliTestCase(unittest.TestCase):
         self.assertIn("大小", err)
 
 
+class GuiEntryTestCase(unittest.TestCase):
+    """The windowed exe is double-clicked with no arguments."""
+
+    def setUp(self) -> None:
+        from peverything import gui_entry
+
+        self.entry = gui_entry
+        self.calls: list[list[str]] = []
+        self.original = gui_entry.main
+        gui_entry.main = lambda argv: self.calls.append(list(argv)) or 0  # type: ignore[assignment]
+
+    def tearDown(self) -> None:
+        self.entry.main = self.original  # type: ignore[assignment]
+
+    def test_no_arguments_means_gui(self) -> None:
+        self.entry.main_gui([])
+        self.assertEqual(self.calls[-1], ["gui"])
+
+    def test_flags_are_forwarded_to_gui(self) -> None:
+        self.entry.main_gui(["--query=ext:pdf"])
+        self.assertEqual(self.calls[-1], ["gui", "--query=ext:pdf"])
+
+    def test_existing_subcommand_is_kept(self) -> None:
+        self.entry.main_gui(["gui", "-o", "index.pev"])
+        self.assertEqual(self.calls[-1], ["gui", "-o", "index.pev"])
+
+    def test_version_is_not_rewritten(self) -> None:
+        self.entry.main_gui(["--version"])
+        self.assertEqual(self.calls[-1], ["--version"])
+
+
 if __name__ == "__main__":
     unittest.main()
