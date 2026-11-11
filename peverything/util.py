@@ -270,6 +270,68 @@ class _ShellExecuteInfoW(ctypes.Structure):
     ]
 
 
+def set_window_icon(hwnd: int, icon_path: str | Path) -> bool:
+    """Give a window the real .ico for both the title bar and the taskbar.
+
+    Tk's ``wm iconbitmap`` only sets ``ICON_SMALL`` on some versions, and its
+    ``default`` option applies to *future* toplevels, so the main window can be
+    left with Tk's feather. Setting both sizes through WM_SETICON is explicit
+    and works for the taskbar button (which reads ICON_BIG) too.
+    """
+    if not is_windows():
+        return False
+    target = str(Path(icon_path))
+    if not os.path.exists(target):
+        return False
+    WM_SETICON = 0x0080
+    ICON_SMALL, ICON_BIG = 0, 1
+    IMAGE_ICON = 1
+    LR_LOADFROMFILE = 0x0010
+    SM_CXICON, SM_CYICON, SM_CXSMICON, SM_CYSMICON = 11, 12, 49, 50
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.LoadImageW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_uint,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p]
+        user32.SendMessageW.restype = ctypes.c_void_p
+        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+        user32.GetSystemMetrics.restype = ctypes.c_int
+
+        small = user32.LoadImageW(
+            None,
+            target,
+            IMAGE_ICON,
+            user32.GetSystemMetrics(SM_CXSMICON),
+            user32.GetSystemMetrics(SM_CYSMICON),
+            LR_LOADFROMFILE,
+        )
+        big = user32.LoadImageW(
+            None,
+            target,
+            IMAGE_ICON,
+            user32.GetSystemMetrics(SM_CXICON),
+            user32.GetSystemMetrics(SM_CYICON),
+            LR_LOADFROMFILE,
+        )
+        applied = False
+        if small:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, small)
+            applied = True
+        if big:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, big)
+            applied = True
+        return applied
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+
 def show_properties(path: str | Path) -> bool:
     """Open the Windows "Properties" dialog for a file or folder.
 

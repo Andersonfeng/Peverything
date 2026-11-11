@@ -164,5 +164,35 @@ class GuiTestCase(unittest.TestCase):
         self.app.quit_app()
 
 
+class AssetPathTestCase(unittest.TestCase):
+    """The frozen exe must find the icon, or every icon falls back to Tk's."""
+
+    def test_source_layout(self) -> None:
+        from peverything.gui import asset_path
+
+        self.assertTrue(asset_path("peverything.ico").exists())
+
+    def test_bundle_layouts(self) -> None:
+        import sys as _sys
+
+        from peverything import gui
+
+        for layout in ("assets", "peverything/assets"):
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                target = root / layout / "peverything.ico"
+                target.parent.mkdir(parents=True)
+                target.write_bytes(b"ico")
+                previous = getattr(_sys, "_MEIPASS", None)
+                _sys._MEIPASS = str(root)  # type: ignore[attr-defined]
+                try:
+                    self.assertEqual(gui.asset_path("peverything.ico"), target)
+                finally:
+                    if previous is None:
+                        del _sys._MEIPASS  # type: ignore[attr-defined]
+                    else:
+                        _sys._MEIPASS = previous  # type: ignore[attr-defined]
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -98,7 +98,7 @@ def build(name: str, entry: Path, windowed: bool, onedir: bool) -> Path:
         "--icon",
         str(ICON),
         "--add-data",
-        f"{ICON.parent}{';' if sys.platform == 'win32' else ':'}peverything/assets",
+        f"{ICON.parent}{';' if sys.platform == 'win32' else ':'}assets",
         "--version-file",
         str(write_version_file(name)),
         "--hidden-import",

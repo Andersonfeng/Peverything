@@ -8,6 +8,7 @@ journal polling run in worker threads and report back through a
 from __future__ import annotations
 
 import csv
+import ctypes
 import queue
 import sys
 import threading
@@ -40,9 +41,18 @@ _ALT_MASK = 0x0008
 
 
 def asset_path(name: str) -> Path:
-    """Locate a bundled asset both from source and from a PyInstaller bundle."""
+    """Locate a bundled asset both from source and from a PyInstaller bundle.
+
+    ``--add-data`` may put the folder at the bundle root or keep the package
+    layout, so both candidates are probed; missing this made the frozen exe fall
+    back to Tk's default icon for the window and the tray.
+    """
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return base / "assets" / name
+    candidates = (base / "assets" / name, base / "peverything" / "assets" / name)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 COLUMNS = (
     ("name", "名称", 360, "w"),
@@ -239,17 +249,40 @@ class PeverythingApp:
         elif command == MENU_QUIT:
             self.quit_app()
 
+    def _apply_window_icon(self) -> None:
+        """Same .ico everywhere: title bar, Alt+Tab and the taskbar button."""
+        icon = asset_path("peverything.ico")
+        if not icon.exists():
+            return
+        try:
+            # `default=` covers future toplevels (the settings dialog); the
+            # plain call is what actually sets the main window's icon.
+            self.root.iconbitmap(str(icon))
+            self.root.iconbitmap(default=str(icon))
+        except Exception:  # pragma: no cover - icon is cosmetic
+            pass
+        # Let Tk finish creating the toplevel, then force both ICON_SMALL
+        # (title bar) and ICON_BIG (taskbar) to our file.
+        self.root.after(30, lambda: self._force_native_icon(icon))
+
+    def _force_native_icon(self, icon: Path) -> None:
+        try:
+            hwnd = self.root.winfo_id()
+            util.set_window_icon(hwnd, icon)
+            # Tk toplevels are wrapped on Windows; the outer window is the one
+            # the taskbar and Alt+Tab list.
+            parent = ctypes.windll.user32.GetParent(hwnd)
+            if parent:
+                util.set_window_icon(parent, icon)
+        except Exception:  # pragma: no cover - cosmetic
+            pass
+
     # ------------------------------------------------------------------ ui ---
     def _build_ui(self) -> None:
         self.root.title(f"{APP_NAME} {__version__} - 极速文件检索")
         self.root.geometry("1180x700")
         self.root.minsize(820, 460)
-        try:
-            icon = asset_path("peverything.ico")
-            if icon.exists():
-                self.root.iconbitmap(default=str(icon))
-        except Exception:  # pragma: no cover - icon is cosmetic
-            pass
+        self._apply_window_icon()
 
         style = ttk.Style()
         for theme in ("vista", "winnative", "clam"):

@@ -50,18 +50,18 @@ def build() -> Image.Image:
 
     draw = ImageDraw.Draw(base)
     centre = (SIZE * 0.43, SIZE * 0.43)
-    radius = SIZE * 0.24
-    ring = int(SIZE * 0.075)
+    radius = SIZE * 0.245
+    ring = int(SIZE * 0.095)
     draw.ellipse(
         [centre[0] - radius, centre[1] - radius, centre[0] + radius, centre[1] + radius],
         outline=(255, 255, 255, 255),
         width=ring,
     )
     # handle: thick round-capped diagonal
-    start = (centre[0] + radius * 0.72, centre[1] + radius * 0.72)
-    end = (SIZE * 0.79, SIZE * 0.79)
-    draw.line([start, end], fill=(255, 255, 255, 255), width=int(SIZE * 0.10))
-    cap = int(SIZE * 0.05)
+    start = (centre[0] + radius * 0.70, centre[1] + radius * 0.70)
+    end = (SIZE * 0.80, SIZE * 0.80)
+    draw.line([start, end], fill=(255, 255, 255, 255), width=int(SIZE * 0.125))
+    cap = int(SIZE * 0.0625)
     for point in (start, end):
         draw.ellipse(
             [point[0] - cap, point[1] - cap, point[0] + cap, point[1] + cap],
